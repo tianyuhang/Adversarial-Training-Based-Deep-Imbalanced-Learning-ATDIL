@@ -84,34 +84,41 @@ class AdversarialTraining:
 
     def build_autoencoder(self):
         """
-        Build an autoencoder (AE) for generating adversarial examples.
+        AAE
         """
-        # Input layer
+        def squeeze_excite_block(input_tensor, ratio=16):
+            channel = input_tensor.shape[-1]
+            se = layers.GlobalAveragePooling1D()(layers.Reshape((1, channel))(input_tensor))  # Squeeze
+            se = layers.Dense(channel // ratio, activation='relu')(se)  # Excitation
+            se = layers.Dense(channel, activation='sigmoid')(se)  # Excitation
+            se = layers.Reshape((channel,))(se)  # reshape
+            output_tensor = layers.Multiply()([input_tensor, se])  
+            return output_tensor
+    
+        # input
         input_img = keras.Input(shape=(self.num_features,))
-        
-        # Encoder
+    
+        # encoder
         encoded = layers.Dense(64, activation='relu')(input_img)
+        encoded = squeeze_excite_block(encoded)  # add SE layer
         encoded = layers.Dense(self.encoding_dim, activation='relu')(encoded)
-        encoded = layers.Dense(self.encoding_dim, activation='relu')(encoded)
-        
-        # Decoder
-        decoded = layers.Dense(self.encoding_dim, activation='relu')(encoded)
-        decoded = layers.Dense(self.encoding_dim, activation='relu')(decoded)
-        decoded = layers.Dense(self.num_features, activation='relu')(decoded)
-        
-        # Autoencoder model
-        autoencoder = keras.Model(input_img, decoded)
-        
-        # Custom loss function
+    
+        # decoder
+        decoded = layers.Dense(64, activation='relu')(encoded)
+        decoded = squeeze_excite_block(decoded)  # add SE layer
+        decoded = layers.Dense(self.num_features, activation='sigmoid')(decoded)
+    
+        AE = keras.Model(input_img, decoded)
+    
         def custom_loss(y_true, y_pred):
             reconstruction_loss = tf.math.reduce_mean(tf.math.square(y_pred - y_true), axis=1)
             pos = self.target_model(y_pred)[:, 1]
             adversarial_loss = self.attacking_strength * pos
             return reconstruction_loss + adversarial_loss
+    
+        AE.compile(optimizer=keras.optimizers.Adam(learning_rate=0.001), loss=custom_loss)
+        return AE
         
-        # Compile the model
-        autoencoder.compile(optimizer=keras.optimizers.Adam(learning_rate=0.001), loss=custom_loss)
-        return autoencoder
 
     def train(self, X_train, y_train, base_model=None):
         """
@@ -169,7 +176,7 @@ class AdversarialTraining:
             if epoch % 1 == 0:  
                 print(f'Epoch: {epoch}')
                 current_metrics = cal_result(self.target_model, y_test, X_test)                        
-                
+                print(current_metrics)
             self.best = current_metrics 
 
         return self.target_model
