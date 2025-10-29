@@ -8,17 +8,17 @@ from sklearn.metrics import auc as calculate_auc
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import StratifiedShuffleSplit
 from keras.models import Sequential
-from keras.layers import Dense, Dropout
+from keras.layers import Dense, Dropout, BatchNormalization, Activation
 from keras.utils import to_categorical
 from sklearn.preprocessing import LabelEncoder
+from keras.callbacks import EarlyStopping
 import os
 
 
-# 确保结果保存目录存在
 results_dir = "results"
 os.makedirs(results_dir, exist_ok=True)
 
-# 定义 GAN 的生成器和判别器
+
 class Generator(nn.Module):
     def __init__(self, input_dim, hidden_dim):
         super(Generator, self).__init__()
@@ -46,50 +46,57 @@ class Discriminator(nn.Module):
         return self.disc(data)
 
 
-# 构建神经网络分类器
-def build_target(input_dim):
+
+def build_target(input_dim, LOSS='binary_crossentropy'):
     model = Sequential()
-    model.add(Dense(30, input_shape=(input_dim,), activation='relu'))
-    model.add(Dropout(0.3))  # 添加 Dropout，丢弃 30% 的神经元
-    model.add(Dense(30, activation='sigmoid'))
-    model.add(Dropout(0.3))  # 再次添加 Dropout
+    
+    # Hidden Layer 1: 64 + BatchNorm + ReLU + Dropout (0.1)
+    model.add(Dense(64, input_shape=(input_dim,)))
+    model.add(BatchNormalization())
+    model.add(Activation('relu'))
+    model.add(Dropout(0.1))
+    
+    # Hidden Layer 2: 32 + BatchNorm + ReLU + Dropout (0.1)
+    model.add(Dense(32))
+    model.add(BatchNormalization())
+    model.add(Activation('relu'))
+    model.add(Dropout(0.1))
+    
+    # Output Layer
     model.add(Dense(2, activation='softmax'))
-    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+    model.compile(loss=LOSS, optimizer='adam', metrics=['accuracy'])
     return model
 
 data_name = 'LC'
 model_name = 'SGAN'
-# 遍历每个数据集
-for desired_IR in [5,10,15,20,40,60]: 
-    # 加载数据
+
+for desired_IR in [5,10,15,20,40,60]:
+
     Data = np.loadtxt(f'ImbalanceData/{data_name}_{desired_IR}.txt')
     X, y = Data[:, :-1], Data[:, -1]
     scaler = MinMaxScaler()
     X = scaler.fit_transform(X)
 
-    # 数据集划分
     sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
     for train_index, test_index in sss.split(X, y):
         X_train, X_test = X[train_index], X[test_index]
         y_train, y_test = y[train_index], y[test_index]
 
-    # 使用 SMOTE 生成少数类样本
+
     sm = SMOTE(random_state=0)
     X_train_res, y_train_res = sm.fit_resample(X_train, y_train)
 
-    # 筛选少数类样本
+
     minority_class_label = 1
     minority_indices = np.where(y_train_res == minority_class_label)[0]
     X_train_minority = X_train_res[minority_indices]
     y_train_minority = y_train_res[minority_indices]
 
-    # 准备少数类样本用于 GAN 训练
     tensor_x = torch.Tensor(X_train_minority)
     tensor_y = torch.Tensor(y_train_minority)
     dataset = TensorDataset(tensor_x, tensor_y)
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
 
-    # 初始化 GAN 参数
     input_dim = X_train.shape[1]
     hidden_dim = 64
     z_dim = input_dim
@@ -103,13 +110,13 @@ for desired_IR in [5,10,15,20,40,60]:
     disc_opt = torch.optim.Adam(disc.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
 
-    # GAN 训练
+
     for epoch in range(n_epochs):
         for real, _ in dataloader:
             real = real.to(device)
             cur_batch_size = real.size(0)
 
-            # 判别器训练
+
             disc_opt.zero_grad()
             noise = torch.randn(cur_batch_size, z_dim).to(device)
             fake = gen(noise)
@@ -120,7 +127,7 @@ for desired_IR in [5,10,15,20,40,60]:
             disc_loss.backward()
             disc_opt.step()
 
-            # 生成器训练
+
             gen_opt.zero_grad()
             fake = gen(noise)
             disc_fake_pred = disc(fake)
@@ -128,38 +135,55 @@ for desired_IR in [5,10,15,20,40,60]:
             gen_loss.backward()
             gen_opt.step()
 
-    # 生成新的样本
     noise = torch.randn(X_train_minority.shape[0], z_dim).to(device)
     fake_samples = gen(noise).detach().cpu().numpy()
 
-    # 将生成样本和原始数据集组合
     X_train_final = np.vstack([X_train_res, fake_samples])
     y_train_final = np.hstack([y_train_res, np.ones(fake_samples.shape[0])])
 
-    # 对标签进行独热编码
+
     label_encoder = LabelEncoder()
     y_train_encoded = label_encoder.fit_transform(y_train_final)
     y_test_encoded = label_encoder.transform(y_test)
     y_train_categorical = to_categorical(y_train_encoded, num_classes=2)
     y_test_categorical = to_categorical(y_test_encoded, num_classes=2)
 
-    # 构建并训练神经网络
-    target_model = build_target(X_train.shape[1])
-    target_model.fit(X_train_final, y_train_categorical, epochs=50, batch_size=128, verbose=1, validation_split=0.2)
 
-    # 模型预测
+    target_model = build_target(X_train.shape[1])
+
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=10,
+        verbose=1,
+        mode='min',
+        restore_best_weights=True
+    )
+    
+
+    target_model.fit(
+        X_train_final, 
+        y_train_categorical, 
+        epochs=200, 
+        batch_size=32, 
+        verbose=1, 
+        validation_split=0.1, #
+        callbacks=[early_stopping]
+    )
+
+
     y_pred_prob = target_model.predict(X_test)
     y_pred = y_pred_prob.argmax(axis=1)
 
-    # 计算指标
+
     auc_score = roc_auc_score(y_test_encoded, y_pred_prob[:, 1])
     precision, recall, _ = precision_recall_curve(y_test_encoded, y_pred_prob[:, 1])
     pr_auc = calculate_auc(recall, precision)
     brier_score = brier_score_loss(y_test_encoded, y_pred_prob[:, 1])
     fpr, tpr, _ = roc_curve(y_test_encoded, y_pred_prob[:, 1])
+    # G-means using the best threshold from ROC curve
     gmeans = np.sqrt(tpr * (1 - fpr)).max()
 
-    # 保存结果到文件
+
     target_model.save(f'models/{data_name}{desired_IR}_{model_name}.h5')
     # result_path = os.path.join(results_dir, f"PAKDD_{desired_IR}_SGAN_results.txt")
     # with open(result_path, "w") as f:
