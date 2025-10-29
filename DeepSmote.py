@@ -13,6 +13,7 @@ from imblearn.over_sampling import SMOTE
 from keras.models import Sequential
 from keras.layers import Dense
 from keras.utils import to_categorical
+from keras.callbacks import EarlyStopping
 import keras
 from keras import layers
 import numpy as np
@@ -76,6 +77,13 @@ def cal_result(Cls, y_te, X_te):
     L.append(G_means)
     return np.array(L)
 
+early_stopping = EarlyStopping(
+    monitor='val_loss',
+    patience=10,
+    verbose=1,
+    mode='min',
+    restore_best_weights=True  
+)
 
 def DeepSmote():
     for desired_IR in [5,10,15,20,40,60]:
