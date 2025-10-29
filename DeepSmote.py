@@ -25,13 +25,27 @@ model_name = 'DS'
 
 def build_target(num_fea, LOSS='binary_crossentropy'):
     """
-    Standard neural network training procedure.
+    Standard neural network training procedure with specified architecture.
+    Hidden layers: [64 (ReLU), 32 (ReLU)].
+    Includes Batch Normalization and Dropout (0.1) after each hidden layer.
     """
     model = Sequential()
-    model.add(Dense(50, input_shape=(num_fea,), activation='relu'))
-    model.add(Dense(40, activation='relu'))
-    model.add(Dense(30, activation='relu'))
+
+    # --- Layer 1: Dense (64) + BatchNorm + Dropout (0.1) ---
+    model.add(Dense(64, input_shape=(num_fea,)))
+    model.add(layers.BatchNormalization())
+    model.add(layers.Activation('relu'))
+    model.add(layers.Dropout(0.1))
+
+    # --- Layer 2: Dense (32) + BatchNorm + Dropout (0.1) ---
+    model.add(Dense(32))
+    model.add(layers.BatchNormalization())
+    model.add(layers.Activation('relu'))
+    model.add(layers.Dropout(0.1))
+
+    # --- Output Layer ---
     model.add(Dense(2, activation='softmax'))
+
     model.compile(loss=LOSS, optimizer='adam', metrics=['accuracy'])
     return model
 
@@ -88,7 +102,7 @@ def DeepSmote():
         noisy_X = X_p + noise
         noisy_X = np.clip(noisy_X, 0.0, 1.0)
 
-        AE.fit(noisy_X, X_p, epochs=100, batch_size=10, shuffle=True, verbose=1)
+        AE.fit(noisy_X, X_p, epochs=100, batch_size=32, shuffle=True, verbose=1)
 
         encoder = keras.Model(input_img, encoded)
 
@@ -133,7 +147,7 @@ def DeepSmote():
             y_new_ = to_categorical(y_new)
 
             clf = build_target(num_fea=X_tr.shape[1])
-            clf.fit(X_new, y_new_, epochs=10, batch_size=20, shuffle=True,class_weight = {0:1, 1:desired_IR/2})
+            clf.fit(X_new, y_new_, epochs=50, batch_size=20, shuffle=True,class_weight = {0:1, 1:desired_IR/2})
 
             DeepSmote_list.append(cal_result(clf, y_te, X_te))
         DeepSmote_list = np.array(DeepSmote_list)[0].T
