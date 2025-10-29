@@ -70,16 +70,32 @@ class AdversarialTraining:
         self.batch_size = 32
         self.autoencoder = self.build_autoencoder()
 
-    def build_target_model(self):
-        """
-        Build the target model for classification.
-        """
+    def build_target(self):
         model = Sequential()
-        model.add(Dense(64, input_shape=(Data.shape[1] - 1,), activation='relu'))
-        model.add(Dense(32, activation='relu'))
-        # model.add(Dense(32, activation='relu'))
-        model.add(Dense(2, activation='softmax'))
-        model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+        model.add(Input(shape=(Data.shape[1] - 1,)))  # 输入维度不变
+    
+        # Hidden Layer 1: 64 -> BN -> ReLU -> Dropout 0.1
+        model.add(Dense(64, use_bias=False))
+        model.add(BatchNormalization())
+        model.add(Activation('relu'))
+        model.add(Dropout(0.1))
+    
+        # Hidden Layer 2: 32 -> BN -> ReLU -> Dropout 0.1
+        model.add(Dense(128, use_bias=False))
+        model.add(BatchNormalization())
+        model.add(Activation('relu'))
+        model.add(Dropout(0.1))
+    
+        # Output: binary classification
+        model.add(Dense(2, activation='sigmoid'))
+    
+        # Optimizer & compile 
+        model.compile(
+            # loss='binary_crossentropy',
+            loss='binary_crossentropy',
+            optimizer=Adam(learning_rate=1e-3),
+            metrics=['accuracy', tf.keras.metrics.AUC(name='auc')]
+        )
         return model
 
     def build_autoencoder(self):
