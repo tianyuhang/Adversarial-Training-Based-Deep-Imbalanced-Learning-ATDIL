@@ -93,8 +93,7 @@ def train_GAN():
 
         results = []
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
-        
-        # 定义早停回调
+
         early_stopping = EarlyStopping(
             monitor='val_loss',
             patience=10,
@@ -107,10 +106,10 @@ def train_GAN():
             X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
             
-            # 数据扩充
+
             X_train_aug, y_train_aug = augment_data(X_train, y_train, generator, gan.latent_dim, num_samples=500)
             
-            # 训练分类器 (Modified Classifier)
+
             classifier = tf.keras.Sequential([
                 # Hidden Layer 1: 64 (ReLU) + BatchNorm + Dropout (0.1)
                 tf.keras.layers.Dense(64, input_dim=X_train.shape[1]),
@@ -130,7 +129,7 @@ def train_GAN():
             
             classifier.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
             
-            # 训练分类器，使用新的参数和早停机制
+  
             classifier.fit(
                 X_train_aug, 
                 y_train_aug, 
@@ -138,11 +137,10 @@ def train_GAN():
                 batch_size=32, 
                 verbose=0,
                 class_weight={0: 1, 1: desired_IR},
-                validation_split=0.1,  # 划分 10% 作为验证集
-                callbacks=[early_stopping] # 添加早停回调
+                validation_split=0.1,  
+                callbacks=[early_stopping] 
             )
 
-            # 评估模型
             y_pred_prob = classifier.predict(X_test)[:, 1]
             roc_auc = roc_auc_score(y_test, y_pred_prob)
             avg_precision = average_precision_score(y_test, y_pred_prob)
