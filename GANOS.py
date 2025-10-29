@@ -3,8 +3,8 @@ import tensorflow as tf
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.metrics import roc_auc_score, average_precision_score, brier_score_loss, recall_score
+from tensorflow.keras.callbacks import EarlyStopping
 
-# 定义生成器
 def build_generator(latent_dim, output_dim):
     inputs = tf.keras.Input(shape=(latent_dim,))
     x = tf.keras.layers.Dense(36, activation='relu')(inputs)
@@ -13,7 +13,6 @@ def build_generator(latent_dim, output_dim):
     outputs = tf.keras.layers.Dense(output_dim, activation='tanh')(x)
     return tf.keras.Model(inputs, outputs)
 
-# 定义判别器
 def build_discriminator(input_dim):
     inputs = tf.keras.Input(shape=(input_dim,))
     x = tf.keras.layers.Dense(36, activation='sigmoid')(inputs)
@@ -22,7 +21,6 @@ def build_discriminator(input_dim):
     outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
     return tf.keras.Model(inputs, outputs)
 
-# GAN 类定义
 class GAN:
     def __init__(self, input_dim, latent_dim=100):
         self.input_dim = input_dim
@@ -36,15 +34,12 @@ class GAN:
         self.loss_fn = tf.keras.losses.BinaryCrossentropy()
         
     def train_step(self, real_data, batch_size):
-        # 生成噪声
         noise = tf.random.normal([batch_size, self.latent_dim])
         fake_data = self.generator(noise, training=True)
         
-        # 合成标签
         real_labels = tf.ones((batch_size, 1))
         fake_labels = tf.zeros((batch_size, 1))
         
-        # 训练判别器
         with tf.GradientTape() as tape:
             real_loss = self.loss_fn(real_labels, self.discriminator(real_data, training=True))
             fake_loss = self.loss_fn(fake_labels, self.discriminator(fake_data, training=True))
@@ -52,7 +47,6 @@ class GAN:
         grads = tape.gradient(d_loss, self.discriminator.trainable_variables)
         self.d_optimizer.apply_gradients(zip(grads, self.discriminator.trainable_variables))
         
-        # 训练生成器
         with tf.GradientTape() as tape:
             fake_data = self.generator(noise, training=True)
             g_loss = self.loss_fn(real_labels, self.discriminator(fake_data, training=True))
@@ -73,7 +67,6 @@ class GAN:
         
         return self.generator
 
-# 数据扩充函数
 def augment_data(X_train, y_train, generator, latent_dim, num_samples):
     noise = tf.random.normal([num_samples, latent_dim])
     generated_samples = generator(noise).numpy()
@@ -84,7 +77,7 @@ def augment_data(X_train, y_train, generator, latent_dim, num_samples):
 
 data_name = 'LC'
 model_name = 'GANOS'
-# 模型训练函数
+
 def train_GAN():
     for desired_IR in [5,10,15,20,40,60]:
         data = np.loadtxt(f'ImbalanceData/{data_name}_{desired_IR}.txt')
@@ -101,37 +94,67 @@ def train_GAN():
         results = []
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
         
+        # 定义早停回调
+        early_stopping = EarlyStopping(
+            monitor='val_loss',
+            patience=10,
+            verbose=1,
+            mode='min',
+            restore_best_weights=True
+        )
+
         for train_idx, test_idx in sss.split(X, y):
             X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
             
-            # 数据扩充
             X_train_aug, y_train_aug = augment_data(X_train, y_train, generator, gan.latent_dim, num_samples=500)
             
-            # 训练分类器
+            # 构建修改后的分类器
             classifier = tf.keras.Sequential([
-                tf.keras.layers.Dense(50, activation='relu', input_dim=X_train.shape[1]),
-                tf.keras.layers.Dense(40, activation='relu'),
-                tf.keras.layers.Dense(30, activation='relu'),
+                # Hidden Layer 1: 64 (ReLU) + BatchNorm + Dropout (0.1)
+                tf.keras.layers.Dense(64, input_dim=X_train.shape[1]),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.Activation('relu'),
+                tf.keras.layers.Dropout(0.1),
+                
+                # Hidden Layer 2: 32 (ReLU) + BatchNorm + Dropout (0.1)
+                tf.keras.layers.Dense(32),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.Activation('relu'),
+                tf.keras.layers.Dropout(0.1),
+                
+                # Output Layer
                 tf.keras.layers.Dense(2, activation='softmax')
             ])
+            
             classifier.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-            classifier.fit(X_train_aug, y_train_aug, epochs=10, batch_size=32, verbose=0, class_weight={0: 1, 1: desired_IR})
+            
+            # 训练分类器，使用新的参数和早停机制
+            classifier.fit(
+                X_train_aug, 
+                y_train_aug, 
+                epochs=200, 
+                batch_size=32, 
+                verbose=0, 
+                class_weight={0: 1, 1: desired_IR},
+                validation_split=0.1,  # 划分验证集
+                callbacks=[early_stopping] # 添加早停回调
+            )
 
-            # 评估模型
             y_pred_prob = classifier.predict(X_test)[:, 1]
             roc_auc = roc_auc_score(y_test, y_pred_prob)
             avg_precision = average_precision_score(y_test, y_pred_prob)
             brier_score = brier_score_loss(y_test, y_pred_prob)
-            sensitivity = recall_score(y_test, np.argmax(classifier.predict(X_test), axis=1))
-            specificity = recall_score(y_test, np.argmax(classifier.predict(X_test), axis=1), pos_label=0)
+            
+            y_pred = np.argmax(classifier.predict(X_test), axis=1)
+            sensitivity = recall_score(y_test, y_pred, pos_label=1)
+            specificity = recall_score(y_test, y_pred, pos_label=0)
             g_means = np.sqrt(sensitivity * specificity)
 
             results.append([roc_auc, avg_precision, brier_score, g_means])
             results = np.array(results).T
             print(f"ROC AUC: {roc_auc:.4f}, PR AUC: {avg_precision:.4f}, Brier Score: {brier_score:.4f}, G-Means: {g_means:.4f}")
         classifier.save(f'models/{data_name}{desired_IR}_{model_name}.h5')
-        # np.savetxt(f'results/PAKDD_GAN_{desired_IR}.txt', results)
 
 if __name__ == '__main__':
     train_GAN()
