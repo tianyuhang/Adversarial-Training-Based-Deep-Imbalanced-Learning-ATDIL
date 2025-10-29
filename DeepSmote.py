@@ -77,13 +77,6 @@ def cal_result(Cls, y_te, X_te):
     L.append(G_means)
     return np.array(L)
 
-early_stopping = EarlyStopping(
-    monitor='val_loss',
-    patience=10,
-    verbose=1,
-    mode='min',
-    restore_best_weights=True  
-)
 
 def DeepSmote():
     for desired_IR in [5,10,15,20,40,60]:
@@ -155,7 +148,14 @@ def DeepSmote():
             y_new_ = to_categorical(y_new)
 
             clf = build_target(num_fea=X_tr.shape[1])
-            clf.fit(X_new, y_new_, epochs=50, batch_size=20, shuffle=True,class_weight = {0:1, 1:desired_IR/2})
+            early_stopping = EarlyStopping(
+                monitor='val_loss',
+                patience=10,
+                verbose=1,
+                mode='min',
+                restore_best_weights=True)
+            
+            clf.fit(X_new, y_new_, epochs=200, batch_size=32, shuffle=True,class_weight = {0:1, 1:desired_IR/2}, validation_split=0.1, callbacks=[early_stopping])
 
             DeepSmote_list.append(cal_result(clf, y_te, X_te))
         DeepSmote_list = np.array(DeepSmote_list)[0].T
