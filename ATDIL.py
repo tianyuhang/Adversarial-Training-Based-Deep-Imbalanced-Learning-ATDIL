@@ -145,7 +145,7 @@ class AdversarialTraining:
         X_positive = X_train[np.where(y_train == 1)]
        
         # Add noise to positive samples
-        noise = 0.001 * np.random.normal(size=np.shape(X_positive))
+        noise = 0.01 * np.random.normal(size=np.shape(X_positive))
         noisy_positive = X_positive + noise
         noisy_positive = np.clip(noisy_positive, 0.0, 1.0) 
 
